@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api';
 import { UploadCloud, CheckCircle, RefreshCcw, Download, Trash2 } from 'lucide-react';
 import JobDescription from '../components/JobDescription';
 import UploadResume from '../components/UploadResume';
@@ -15,7 +15,7 @@ const Dashboard = () => {
     try {
       setLoading(true);
       setError('');
-      const res = await axios.get('http://localhost:5000/api/rank-candidates');
+      const res = await api.get('/api/rank-candidates');
       setCandidates(res.data.candidates || []);
       setActiveJD(res.data.jd || null);
     } catch (err) {
@@ -42,7 +42,7 @@ const Dashboard = () => {
   const handleClear = async () => {
     if (window.confirm('Are you sure you want to clear all candidates?')) {
       try {
-        await axios.delete('http://localhost:5000/api/candidates');
+        await api.delete('/api/candidates');
         fetchCandidates();
       } catch (err) {
         console.error(err);

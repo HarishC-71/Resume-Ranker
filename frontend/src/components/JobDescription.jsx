@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+import api from '../api';
 import { Target, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react';
 
 const JobDescription = ({ jd, onSaved }) => {
@@ -13,7 +13,7 @@ const JobDescription = ({ jd, onSaved }) => {
     
     setLoading(true);
     try {
-      await axios.post('http://localhost:5000/api/job-description', { text });
+      await api.post('/api/job-description', { text });
       setText('');
       onSaved();
     } catch (error) {

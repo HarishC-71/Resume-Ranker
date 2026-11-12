@@ -25,10 +25,28 @@ const apiRoutes = require('./routes/api');
 
 const app = express();
 
-app.use(cors());
+// CORS configuration to allow deployed frontend and all origins
+const corsOptions = {
+  origin: (origin, callback) => {
+    callback(null, true);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(uploadDir));
+
+// Root health-check endpoint
+app.get('/', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Resume-Ranker API is running!'
+  });
+});
 
 // Routes
 app.use('/api', apiRoutes);

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useDropzone } from 'react-dropzone';
-import axios from 'axios';
+import api from '../api';
 import { FileText, UploadCloud, X, Loader2 } from 'lucide-react';
 
 const UploadResume = ({ onUploaded, disabled }) => {
@@ -35,7 +35,7 @@ const UploadResume = ({ onUploaded, disabled }) => {
     setUploading(true);
     setProgress(10);
     try {
-      await axios.post('http://localhost:5000/api/upload-resume', formData, {
+      await api.post('/api/upload-resume', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },

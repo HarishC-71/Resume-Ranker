@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { User, Mail, Phone, ExternalLink, Activity, Target, AlertTriangle, FileText, Download, Star } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } from 'recharts';
+import { API_BASE_URL } from '../api';
 
 const CandidateList = ({ candidates }) => {
   const [expandedId, setExpandedId] = useState(null);
@@ -169,7 +170,7 @@ const CandidateList = ({ candidates }) => {
                     </div>
                     
                     <div className="mt-4 flex space-x-3">
-                      <a href={`http://localhost:5000/${candidate.filePath}`} target="_blank" rel="noreferrer" className="flex items-center justify-center space-x-2 flex-1 btn-secondary text-sm h-10">
+                      <a href={`${API_BASE_URL}/${candidate.filePath}`} target="_blank" rel="noreferrer" className="flex items-center justify-center space-x-2 flex-1 btn-secondary text-sm h-10">
                         <ExternalLink size={16} />
                         <span>View Original PDF</span>
                       </a>
