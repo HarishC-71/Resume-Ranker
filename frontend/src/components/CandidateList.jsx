@@ -6,6 +6,15 @@ import { API_BASE_URL } from '../api';
 const CandidateList = ({ candidates }) => {
   const [expandedId, setExpandedId] = useState(null);
 
+  const getInitials = (name) => {
+    if (!name || name === 'Unknown Candidate') return '';
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+    return name.slice(0, 2).toUpperCase();
+  };
+
   const getScoreColor = (score) => {
     if (score >= 80) return 'text-emerald-600';
     if (score >= 60) return 'text-indigo-600';
@@ -64,18 +73,34 @@ const CandidateList = ({ candidates }) => {
               className="p-5 flex items-center justify-between cursor-pointer group"
               onClick={() => setExpandedId(expandedId === idx ? null : idx)}
             >
-              <div className="flex items-center space-x-4">
-                <div className="w-12 h-12 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-600 font-bold group-hover:bg-blue-50 transition-colors">
-                  {candidate.name ? candidate.name.substring(0, 2).toUpperCase() : <User size={24} />}
+              <div className="flex items-center space-x-4 min-w-0">
+                <div className="w-12 h-12 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700 font-bold group-hover:bg-blue-50 group-hover:text-blue-700 group-hover:border-blue-200 transition-colors flex-shrink-0">
+                  {candidate.name ? getInitials(candidate.name) : <User size={22} />}
                 </div>
-                <div>
-                  <h3 className="font-semibold text-lg text-slate-800">{candidate.name || 'Unknown Candidate'}</h3>
-                  <div className="flex items-center text-sm text-slate-500 mt-1 space-x-3">
+                <div className="min-w-0">
+                  <h3 className="font-semibold text-lg text-slate-800 truncate">{candidate.name || 'Unknown Candidate'}</h3>
+                  <div className="flex flex-wrap items-center text-sm text-slate-500 mt-1 gap-x-4 gap-y-1.5">
                     {candidate.email && (
-                      <span className="flex items-center"><Mail size={14} className="mr-1" /> {candidate.email}</span>
+                      <a
+                        href={`mailto:${candidate.email}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex items-center hover:text-blue-600 transition-colors"
+                        title={`Email ${candidate.email}`}
+                      >
+                        <Mail size={14} className="mr-1.5 flex-shrink-0 text-slate-400 group-hover:text-blue-500" />
+                        <span className="truncate max-w-[220px] sm:max-w-none">{candidate.email}</span>
+                      </a>
                     )}
                     {candidate.phone && (
-                      <span className="flex items-center"><Phone size={14} className="mr-1" /> {candidate.phone}</span>
+                      <a
+                        href={`tel:${candidate.phone.replace(/[^\d+]/g, '')}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex items-center hover:text-emerald-700 transition-colors font-medium text-slate-700"
+                        title={`Call ${candidate.phone}`}
+                      >
+                        <Phone size={14} className="mr-1.5 flex-shrink-0 text-emerald-600 group-hover:text-emerald-700" />
+                        <span className="tracking-wide select-all">{candidate.phone}</span>
+                      </a>
                     )}
                   </div>
                   {candidate.missingSkills?.length > 0 && (
@@ -165,14 +190,21 @@ const CandidateList = ({ candidates }) => {
                     <h4 className="flex items-center font-medium text-slate-700 mb-2">
                       <FileText size={16} className="text-blue-500 mr-2" /> Resume Snippet
                     </h4>
-                    <div className="bg-white p-4 rounded-lg border border-slate-200 text-xs text-slate-600 h-32 overflow-y-auto leading-relaxed shadow-inner">
+                    <div className="bg-white p-4 rounded-lg border border-slate-200 text-xs text-slate-600 h-36 overflow-y-auto leading-relaxed shadow-inner whitespace-pre-wrap font-mono select-text">
                       {candidate.resumeText ? candidate.resumeText : 'Text not available'}
                     </div>
                     
                     <div className="mt-4 flex space-x-3">
-                      <a href={`${API_BASE_URL}/${candidate.filePath}`} target="_blank" rel="noreferrer" className="flex items-center justify-center space-x-2 flex-1 btn-secondary text-sm h-10">
+                      <a
+                        href={`${API_BASE_URL}/${candidate.filePath ? candidate.filePath.replace(/\\/g, '/') : ''}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center justify-center space-x-2 flex-1 btn-secondary text-sm h-10 hover:border-blue-400 hover:text-blue-600 transition-all"
+                      >
                         <ExternalLink size={16} />
-                        <span>View Original PDF</span>
+                        <span>
+                          View Original {candidate.filePath?.toLowerCase().endsWith('.docx') ? 'DOCX' : candidate.filePath?.toLowerCase().endsWith('.doc') ? 'DOC' : 'PDF'}
+                        </span>
                       </a>
                     </div>
                   </div>

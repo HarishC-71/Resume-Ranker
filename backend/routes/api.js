@@ -127,7 +127,7 @@ router.post('/upload-resume', checkDB, upload.array('resumes', 10), async (req, 
         phone: contactInfo.phone || '',
         filePath: 'uploads/' + path.basename(file.path),
         originalName: file.originalname,
-        resumeText: text ? (text.substring(0, 1000) + (text.length > 1000 ? '...' : '')) : 'No text extracted',
+        resumeText: text ? (text.substring(0, 3000) + (text.length > 3000 ? '...' : '')) : 'No text extracted',
         detectedSkills: resumeSkills,
         missingSkills: missingSkills,
         bonusSkills: bonusSkills,
@@ -152,6 +152,49 @@ router.get('/rank-candidates', checkDB, async (req, res) => {
 
     const candidates = await Candidate.find({ matchScore: { $gte: minScore } }).sort({ matchScore: -1 });
     const activeJD = await JD.findOne().sort({ createdAt: -1 });
+
+    // Auto-heal candidates with missing, partial, or corrupted phone numbers from existing DB/files
+    for (const c of candidates) {
+      const rawDigits = (c.phone || '').replace(/\D/g, '');
+      const isPartialOrMissing = !c.phone || rawDigits.length < 10;
+      if (isPartialOrMissing) {
+        let textSource = c.resumeText || '';
+        if (c.filePath) {
+          const fullPath = path.join(__dirname, '..', c.filePath);
+          if (fs.existsSync(fullPath)) {
+            try {
+              const parsedText = await parseResume(fullPath, path.extname(fullPath).toLowerCase() === '.pdf' ? 'application/pdf' : '');
+              if (parsedText) textSource = parsedText;
+            } catch (parseErr) {
+              // fallback to resumeText
+            }
+          }
+        }
+        if (textSource) {
+          const freshContact = extractNameAndContact(textSource);
+          let updated = false;
+          if (freshContact.phone && freshContact.phone !== c.phone) {
+            c.phone = freshContact.phone;
+            updated = true;
+          }
+          if (freshContact.email && !c.email) {
+            c.email = freshContact.email;
+            updated = true;
+          }
+          if (freshContact.name && (!c.name || c.name === 'Candidate' || c.name === 'Unknown Candidate')) {
+            c.name = freshContact.name;
+            updated = true;
+          }
+          if (updated) {
+            try {
+              await c.save();
+            } catch (saveErr) {
+              console.warn('Notice: Could not auto-save healed candidate:', saveErr.message);
+            }
+          }
+        }
+      }
+    }
 
     res.status(200).json({ jd: activeJD, candidates });
   } catch (error) {

@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'https://resume-ranker-3u5c.onrender.com').replace(/\/+$/, '');
+export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'https://resume-ranker-3t2v.onrender.com').replace(/\/+$/, '');
 
 const api = axios.create({
   baseURL: API_BASE_URL,
