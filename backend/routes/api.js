@@ -5,13 +5,12 @@ const path = require('path');
 const fs = require('fs');
 const mongoose = require('mongoose');
 const cloudinary = require('cloudinary').v2;
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const Candidate = require('../models/Candidate');
 const JD = require('../models/JD');
 const { parseResume, extractNameAndContact } = require('../utils/parser');
 const { extractSkills, extractJDSkills, calculateMatchScore, getMissingSkills, getBonusSkills } = require('../utils/nlp');
 
-// Ensure local upload directory exists (used as temp buffer when Cloudinary is not configured)
+// Ensure local upload directory exists (always used as temp buffer for parsing)
 const uploadDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -28,71 +27,62 @@ const checkDB = (req, res, next) => {
 };
 
 // ---------------------------------------------------------------------------
-// Storage: Cloudinary (persistent) OR local disk (dev fallback)
+// Storage: always use local disk so parseResume (fs.readFileSync) works.
+// After parsing, upload to Cloudinary if configured, then delete local temp.
 // ---------------------------------------------------------------------------
 const useCloudinary =
   process.env.CLOUDINARY_CLOUD_NAME &&
   process.env.CLOUDINARY_API_KEY &&
   process.env.CLOUDINARY_API_SECRET;
 
-let upload;
-
 if (useCloudinary) {
   cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
+    api_key:    process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET,
   });
-
-  const cloudinaryStorage = new CloudinaryStorage({
-    cloudinary,
-    params: async (req, file) => ({
-      folder: 'resume-ranker',
-      resource_type: 'raw',               // allows PDF / DOCX
-      format: path.extname(file.originalname).replace('.', ''),
-      public_id: `${Date.now()}-${Math.round(Math.random() * 1e9)}`,
-    }),
-  });
-
-  upload = multer({
-    storage: cloudinaryStorage,
-    limits: { fileSize: 15 * 1024 * 1024 },
-    fileFilter: (req, file, cb) => {
-      const ext = path.extname(file.originalname).toLowerCase();
-      if (['.pdf', '.docx', '.doc'].includes(ext)) {
-        cb(null, true);
-      } else {
-        cb(new Error('Only PDF, DOCX, and DOC files are supported'), false);
-      }
-    },
-  });
-
-  console.log('✅ Cloudinary storage enabled');
+  console.log('✅ Cloudinary configured — uploaded files will be stored persistently');
 } else {
-  // Local disk storage (development / no cloud creds)
-  const diskStorage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
-    filename: (req, file, cb) => {
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-      cb(null, uniqueSuffix + path.extname(file.originalname));
-    },
-  });
-
-  upload = multer({
-    storage: diskStorage,
-    limits: { fileSize: 15 * 1024 * 1024 },
-    fileFilter: (req, file, cb) => {
-      const ext = path.extname(file.originalname).toLowerCase();
-      if (['.pdf', '.docx', '.doc'].includes(ext)) {
-        cb(null, true);
-      } else {
-        cb(new Error('Only PDF, DOCX, and DOC files are supported'), false);
-      }
-    },
-  });
-
-  console.log('⚠️  Cloudinary not configured — using local disk storage (files will not persist on Render)');
+  console.log('⚠️  Cloudinary not configured — files stored on local disk (not persistent on Render)');
 }
+
+// Helper: upload a local file to Cloudinary and return the secure URL
+const uploadToCloudinary = (localPath, originalName) => {
+  return new Promise((resolve, reject) => {
+    const ext = path.extname(originalName).toLowerCase().replace('.', '');
+    cloudinary.uploader.upload(localPath, {
+      folder: 'resume-ranker',
+      resource_type: 'raw',
+      format: ext,
+      public_id: `${Date.now()}-${Math.round(Math.random() * 1e9)}`,
+    }, (err, result) => {
+      if (err) return reject(err);
+      resolve(result.secure_url);
+    });
+  });
+};
+
+// Multer: always save to local disk first (parseResume needs a local path)
+const diskStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  },
+});
+
+const upload = multer({
+  storage: diskStorage,
+  limits: { fileSize: 15 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (['.pdf', '.docx', '.doc'].includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only PDF, DOCX, and DOC files are supported'), false);
+    }
+  },
+});
 
 // GET /api/health
 router.get('/health', (req, res) => {
@@ -150,12 +140,11 @@ router.post('/upload-resume', checkDB, upload.array('resumes', 10), async (req, 
     const results = [];
 
     for (const file of req.files) {
-      // Cloudinary stores the file remotely; local disk stores it at file.path
-      // file.path is the full Cloudinary URL when using CloudinaryStorage,
-      // or the local filesystem path when using disk storage.
+      // file.path is always a local disk path (multer disk storage)
       const localFilePath = file.path;
       const mimeType = file.mimetype;
 
+      // 1. Parse text from local file (fs.readFileSync inside parseResume)
       const text = await parseResume(localFilePath, mimeType);
       const contactInfo = extractNameAndContact(text);
 
@@ -170,12 +159,23 @@ router.post('/upload-resume', checkDB, upload.array('resumes', 10), async (req, 
         ? contactInfo.name
         : parsedFilename;
 
-      // Determine the accessible file URL:
-      //   - Cloudinary: file.path is already a full https:// URL
-      //   - Local disk:  file.path is a local path, so build a relative URL
-      const fileUrl = useCloudinary
-        ? file.path
-        : 'uploads/' + path.basename(file.path);
+      // 2. Determine persistent file URL:
+      //    - If Cloudinary is configured: upload the local temp file → get secure_url → delete temp
+      //    - Otherwise: keep local path (relative URL for express.static)
+      let fileUrl = 'uploads/' + path.basename(localFilePath);
+
+      if (useCloudinary) {
+        try {
+          fileUrl = await uploadToCloudinary(localFilePath, file.originalname);
+          // Delete the local temp file after successful cloud upload
+          fs.unlink(localFilePath, (err) => {
+            if (err) console.warn('Warning: could not delete temp file:', localFilePath);
+          });
+        } catch (cloudErr) {
+          console.error('Cloudinary upload failed, keeping local file:', cloudErr.message);
+          // Keep local path as fallback — file remains on disk
+        }
+      }
 
       const candidate = new Candidate({
         name: candidateName,
