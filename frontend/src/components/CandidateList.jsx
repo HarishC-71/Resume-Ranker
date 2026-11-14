@@ -196,7 +196,13 @@ const CandidateList = ({ candidates }) => {
                     
                     <div className="mt-4 flex space-x-3">
                       <a
-                        href={`${API_BASE_URL}/${candidate.filePath ? candidate.filePath.replace(/\\/g, '/') : ''}`}
+                        href={
+                          candidate.filePath
+                            ? candidate.filePath.startsWith('http')
+                              ? candidate.filePath                                          // Cloudinary / absolute URL
+                              : `${API_BASE_URL}/${candidate.filePath.replace(/\\/g, '/')}` // local relative path
+                            : '#'
+                        }
                         target="_blank"
                         rel="noreferrer"
                         className="flex items-center justify-center space-x-2 flex-1 btn-secondary text-sm h-10 hover:border-blue-400 hover:text-blue-600 transition-all"

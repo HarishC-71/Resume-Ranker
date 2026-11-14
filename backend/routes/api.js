@@ -4,12 +4,14 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const mongoose = require('mongoose');
+const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const Candidate = require('../models/Candidate');
 const JD = require('../models/JD');
 const { parseResume, extractNameAndContact } = require('../utils/parser');
 const { extractSkills, extractJDSkills, calculateMatchScore, getMissingSkills, getBonusSkills } = require('../utils/nlp');
 
-// Ensure upload directory exists
+// Ensure local upload directory exists (used as temp buffer when Cloudinary is not configured)
 const uploadDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -25,31 +27,72 @@ const checkDB = (req, res, next) => {
   next();
 };
 
-// Configure multer
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
-  }
-});
+// ---------------------------------------------------------------------------
+// Storage: Cloudinary (persistent) OR local disk (dev fallback)
+// ---------------------------------------------------------------------------
+const useCloudinary =
+  process.env.CLOUDINARY_CLOUD_NAME &&
+  process.env.CLOUDINARY_API_KEY &&
+  process.env.CLOUDINARY_API_SECRET;
 
-const fileFilter = (req, file, cb) => {
-  const ext = path.extname(file.originalname).toLowerCase();
-  if (['.pdf', '.docx', '.doc'].includes(ext)) {
-    cb(null, true);
-  } else {
-    cb(new Error('Only PDF, DOCX, and DOC files are supported'), false);
-  }
-};
+let upload;
 
-const upload = multer({
-  storage,
-  fileFilter,
-  limits: { fileSize: 15 * 1024 * 1024 } // 15MB limit per file
-});
+if (useCloudinary) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+  });
+
+  const cloudinaryStorage = new CloudinaryStorage({
+    cloudinary,
+    params: async (req, file) => ({
+      folder: 'resume-ranker',
+      resource_type: 'raw',               // allows PDF / DOCX
+      format: path.extname(file.originalname).replace('.', ''),
+      public_id: `${Date.now()}-${Math.round(Math.random() * 1e9)}`,
+    }),
+  });
+
+  upload = multer({
+    storage: cloudinaryStorage,
+    limits: { fileSize: 15 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      if (['.pdf', '.docx', '.doc'].includes(ext)) {
+        cb(null, true);
+      } else {
+        cb(new Error('Only PDF, DOCX, and DOC files are supported'), false);
+      }
+    },
+  });
+
+  console.log('✅ Cloudinary storage enabled');
+} else {
+  // Local disk storage (development / no cloud creds)
+  const diskStorage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, uploadDir),
+    filename: (req, file, cb) => {
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+      cb(null, uniqueSuffix + path.extname(file.originalname));
+    },
+  });
+
+  upload = multer({
+    storage: diskStorage,
+    limits: { fileSize: 15 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      if (['.pdf', '.docx', '.doc'].includes(ext)) {
+        cb(null, true);
+      } else {
+        cb(new Error('Only PDF, DOCX, and DOC files are supported'), false);
+      }
+    },
+  });
+
+  console.log('⚠️  Cloudinary not configured — using local disk storage (files will not persist on Render)');
+}
 
 // GET /api/health
 router.get('/health', (req, res) => {
@@ -107,7 +150,13 @@ router.post('/upload-resume', checkDB, upload.array('resumes', 10), async (req, 
     const results = [];
 
     for (const file of req.files) {
-      const text = await parseResume(file.path, file.mimetype);
+      // Cloudinary stores the file remotely; local disk stores it at file.path
+      // file.path is the full Cloudinary URL when using CloudinaryStorage,
+      // or the local filesystem path when using disk storage.
+      const localFilePath = file.path;
+      const mimeType = file.mimetype;
+
+      const text = await parseResume(localFilePath, mimeType);
       const contactInfo = extractNameAndContact(text);
 
       const resumeSkills = extractSkills(text, activeJD.extractedSkills);
@@ -121,11 +170,18 @@ router.post('/upload-resume', checkDB, upload.array('resumes', 10), async (req, 
         ? contactInfo.name
         : parsedFilename;
 
+      // Determine the accessible file URL:
+      //   - Cloudinary: file.path is already a full https:// URL
+      //   - Local disk:  file.path is a local path, so build a relative URL
+      const fileUrl = useCloudinary
+        ? file.path
+        : 'uploads/' + path.basename(file.path);
+
       const candidate = new Candidate({
         name: candidateName,
         email: contactInfo.email || '',
         phone: contactInfo.phone || '',
-        filePath: 'uploads/' + path.basename(file.path),
+        filePath: fileUrl,
         originalName: file.originalname,
         resumeText: text ? (text.substring(0, 3000) + (text.length > 3000 ? '...' : '')) : 'No text extracted',
         detectedSkills: resumeSkills,
@@ -159,7 +215,8 @@ router.get('/rank-candidates', checkDB, async (req, res) => {
       const isPartialOrMissing = !c.phone || rawDigits.length < 10;
       if (isPartialOrMissing) {
         let textSource = c.resumeText || '';
-        if (c.filePath) {
+        // Only attempt local file re-parse if filePath is NOT a remote URL
+        if (c.filePath && !c.filePath.startsWith('http')) {
           const fullPath = path.join(__dirname, '..', c.filePath);
           if (fs.existsSync(fullPath)) {
             try {
